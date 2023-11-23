@@ -1,0 +1,153 @@
+/**
+* Name: // Dutch Auction Simulation
+* Based on the internal empty template. 
+* Author: anusha & artemsliusarenko
+* Tags: Basic
+*/
+
+// Dutch Auction Simulation
+
+model dutch_auction
+
+global {
+    int numParticipants <- 10;
+    int numAuctioneer <- 1;
+    list<bool> bidResults <- list_with(numParticipants, false);
+    bool run_auction <- true;
+
+    init {
+        // Initiator code
+        create Auctioneer number: numAuctioneer with:(location:point(15,15));
+        Auctioneer[0].price <- rnd(0, 300);  // Set random start price for auction
+        Auctioneer[0].minPrice <- ((0.2 * Auctioneer[0].price as int) as int);  // Set minPrice to 20% of price
+
+        // Participant code
+        create Participants[] number: numParticipants;
+        int i <- 0;
+        loop participant over: Participants {
+            participant.name <- 'Participant ' + i;
+            participant.index <- i;
+            participant.maxPrice <- rnd(0, 100);  // Set maxPrice randomly for each participant
+            i <- i + 1;
+        }
+    }
+}
+
+species Auctioneer skills: [fipa] {
+
+    int price;
+    int minPrice;
+    bool reduce_price <- false;
+
+    reflex send_request when :(run_auction = true) {
+        // Auctioneer sends a call for proposals (cfp) to participants
+        write 'Sending call for proposals...';
+
+        if (reduce_price = true) {
+            price <- price - 5;  // Reduce price by 5 if needed
+            reduce_price <- false;
+        }
+
+        write 'Current auction price set at ---> ' + price;
+        write 'Minimum selling price set at ---> ' + minPrice;
+
+        // Check if price is above or equal to minPrice to start the auction
+        if (price >= minPrice) {
+            write 'New Dutch auction starting...';
+            run_auction <- false;
+            do start_conversation (to::list(Participants), protocol::'fipa-contract-net', performative::'cfp', contents::[price]);
+        } else if (price < minPrice) {
+            write 'Minimum selling price reached without any successful bids. Auction has ended, unfortunately.';
+        }
+    }
+
+    reflex read_proposal_message when: (!(empty(proposes))) {
+        // Auctioneer reads proposals from participants
+
+        loop a over:proposes {
+            int totalTrues <- 0;
+
+            // Count the number of true results (participants who bid)
+            if (bidResults contains true) {
+                loop bid_result over: bidResults {
+                    if (bid_result) {
+                        totalTrues <- totalTrues + 1;
+                    }
+                }
+            }
+
+            if (totalTrues = 1) {
+                // If only one participant bid, declare them the winner
+                int index <- bidResults index_of true;
+                write 'Participant ' + index + ' is the winner with a bid of ' + price;
+                run_auction <- false;
+                totalTrues <- nil;
+            } else if (totalTrues < 1) {
+                // If no participant bid, reduce the price and continue the auction
+                reduce_price <- true;
+                run_auction <- true;
+            } else if (totalTrues > 1) {
+                // If multiple participants bid, reduce the price and continue the auction
+                reduce_price <- true;
+                run_auction <- true;
+            }
+        }
+    }
+
+    // Visual representation of the Auctioneer
+    aspect base {
+        draw square(7)  color: #orange;
+    }
+}
+
+species Participants skills:[fipa] {
+
+    string name;
+    int maxPrice;
+    bool result;
+    int index;
+
+    reflex reply_messages when:(!empty(cfps)){
+        // Participants respond to the call for proposals (cfp) from the Auctioneer
+        message proposalFromInitiator<-(cfps at 0);
+        int auctionPrice;
+
+        write 'Max price for ' + name + ' set to --- ' + maxPrice;
+
+        // Extract price from the contents of the proposal
+        loop i over: container(proposalFromInitiator.contents) {
+            auctionPrice <- (i as int);
+        }
+
+        write 'Current auction price is --- ' + auctionPrice;
+
+        if(auctionPrice <= maxPrice) {
+            // If the auction price is within the participant's budget, bid true
+            result <- true;
+            bidResults[index] <- true;
+            do propose with: (message: proposalFromInitiator, contents: [result]);
+        } else if (auctionPrice > maxPrice) {
+            // If the auction price is higher than the participant's budget, bid false
+            result <- false;
+            bidResults[index] <- false;
+            do propose with: (message: proposalFromInitiator, contents: [result]);
+        }
+    }
+
+    // Visual representation of Participants
+    aspect base {
+        draw circle(1) color: #green;
+    }
+}
+
+// Experiment setup with GUI output
+experiment name type: gui {
+
+    output {
+        // Display the visual representation of the Auctioneer and Participants
+        display mydisplay {
+            species Auctioneer aspect:base;
+            species Participants aspect:base;
+        }
+    }
+}
